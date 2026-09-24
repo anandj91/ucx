@@ -26,8 +26,9 @@
 #include <pthread.h>
 
 typedef enum {
-    UCT_CUDA_IPC_DEVICE_ADDR_FLAG_MNNVL  = UCS_BIT(0),
-    UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FABRIC = UCS_BIT(1)
+    UCT_CUDA_IPC_DEVICE_ADDR_FLAG_MNNVL     = UCS_BIT(0),
+    UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FABRIC    = UCS_BIT(1),
+    UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FD_SOCKET = UCS_BIT(2)
 } uct_cuda_ipc_device_addr_flags_t;
 
 
@@ -93,7 +94,7 @@ ucs_status_t uct_cuda_ipc_iface_get_device_address(uct_iface_t *tl_iface,
     uct_cuda_ipc_md_t *md                = ucs_derived_of(iface->super.super.md,
                                                            uct_cuda_ipc_md_t);
 
-    if (md->enable_mnnvl || md->fabric_supported) {
+    if (md->enable_mnnvl || md->fabric_supported || (md->fd_path[0] != '\0')) {
         dev_addr->flags = 0;
         if (md->enable_mnnvl) {
             dev_addr->flags |= UCT_CUDA_IPC_DEVICE_ADDR_FLAG_MNNVL;
@@ -101,6 +102,10 @@ ucs_status_t uct_cuda_ipc_iface_get_device_address(uct_iface_t *tl_iface,
 
         if (md->fabric_supported) {
             dev_addr->flags |= UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FABRIC;
+        }
+
+        if (md->fd_path[0] != '\0') {
+            dev_addr->flags |= UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FD_SOCKET;
         }
     }
 
@@ -181,12 +186,14 @@ uct_cuda_ipc_iface_is_reachable_v2(const uct_iface_h tl_iface,
         return 0;
     }
 
-    /* Legacy CUDA IPC handles cannot be exchanged across PID namespaces;
-     * both peers must support fabric IPC handles in that case. */
+    /* Cross-namespace IPC requires fabric handles or socket FD exchange. */
     /* Older peers do not send pid_ns, so preserve legacy same-node reachability
-     * and apply the cross-namespace fabric check only to extended addresses. */
+     * and check cross-namespace capabilities only for extended addresses. */
     if ((iface_addr_len >= sizeof(ipc_addr)) &&
-        (ipc_addr.pid_ns != ucs_sys_get_ns(UCS_SYS_NS_TYPE_PID))) {
+        (ipc_addr.pid_ns != ucs_sys_get_ns(UCS_SYS_NS_TYPE_PID)) &&
+        !(same_uuid && (md->fd_path[0] != '\0') &&
+          (uct_cuda_ipc_iface_dev_addr_flags(dev_addr, dev_addr_len) &
+           UCT_CUDA_IPC_DEVICE_ADDR_FLAG_FD_SOCKET))) {
         local_fabric_supported  = md->fabric_supported;
         remote_fabric_supported = !!(
                 uct_cuda_ipc_iface_dev_addr_flags(dev_addr, dev_addr_len) &
@@ -335,7 +342,8 @@ static ucs_status_t uct_cuda_ipc_iface_query(uct_iface_h tl_iface,
 
     iface_attr->iface_addr_len          = uct_cuda_ipc_iface_address_length();
     iface_attr->device_addr_len         = (md->enable_mnnvl ||
-                                           md->fabric_supported) ?
+                                           md->fabric_supported ||
+                                           (md->fd_path[0] != '\0')) ?
                                           sizeof(uct_cuda_ipc_device_addr_t) :
                                           sizeof(uint64_t);
     iface_attr->ep_addr_len             = 0;

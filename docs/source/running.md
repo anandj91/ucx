@@ -5,6 +5,20 @@
 
 # Running UCX
 
+## CUDA VMM sharing between containers
+
+For same-node CUDA VMM allocations exported as POSIX file descriptors, set
+`UCX_CUDA_IPC_FD_PATH=/run/ucx-fd` to use cooperative Unix socket FD exchange.
+Create that directory first and mount it at the same absolute path in both
+containers. This supports separate PID and network namespaces without
+`hostPID` or `pidfd_getfd` permissions. Both processes must run as the same
+host UID and use a UCX version supporting this setting. The directory path
+must be at most 42 characters long. GPU peer-access requirements still apply.
+
+The setting is empty by default, preserving the existing pidfd exchange.
+Socket exports are removed when their memory registrations are released;
+abnormal process termination can leave `ucx-*` directories in the shared mount.
+
 ## UCX build and install
 
 #### Getting the source

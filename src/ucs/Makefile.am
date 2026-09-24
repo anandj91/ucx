@@ -132,6 +132,7 @@ noinst_HEADERS = \
 	stats/stats.h \
 	sys/checker.h \
 	sys/compiler.h \
+	sys/fd_export.h \
 	sys/lib.h \
 	sys/module.h \
 	sys/module_int.h \
@@ -218,6 +219,7 @@ libucs_la_SOURCES = \
 	sys/iovec.c \
 	sys/lib.c \
 	sys/sock.c \
+	sys/fd_export.c \
 	sys/topo/base/topo.c \
 	sys/topo/base/topo_groups.c \
 	sys/stubs.c \

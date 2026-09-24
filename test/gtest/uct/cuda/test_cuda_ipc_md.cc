@@ -177,7 +177,7 @@ protected:
 
 #if HAVE_DECL_SYS_PIDFD_GETFD
     ucs_status_t pack_posix_fd_key(cuda_posix_fd_mem_buffer &buf, size_t size,
-                                   uct_mem_h *memh, uct_cuda_ipc_rkey_t *rkey)
+                                   uct_mem_h *memh, void *rkey)
     {
         uct_md_mem_reg_params_t reg_params    = {};
         uct_md_mkey_pack_params_t pack_params = {};
@@ -390,6 +390,45 @@ UCS_TEST_P(test_cuda_ipc_md, posix_fd_same_node_ipc)
     EXPECT_UCS_OK(uct_md_mem_dereg_v2(md(), &dereg_params));
 #else
     UCS_TEST_SKIP_R("built without pidfd support");
+#endif
+}
+
+UCS_TEST_P(test_cuda_ipc_md, posix_fd_socket, "FD_PATH=/tmp")
+{
+#if HAVE_DECL_SYS_PIDFD_GETFD
+    cuda_posix_fd_mem_buffer buf(4096, UCS_MEMORY_TYPE_CUDA);
+    uct_cuda_ipc_extended_rkey_t rkey = {};
+    uct_mem_h memh;
+    ASSERT_UCS_OK(pack_posix_fd_key(buf, buf.size(), &memh, &rkey));
+    ASSERT_EQ(UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET,
+              rkey.super.ph.handle_type);
+    ASSERT_EQ(CUDA_SUCCESS, cuMemsetD8((CUdeviceptr)buf.ptr(), 0xAB, buf.size()));
+
+    /* FD lookup must not depend on either the peer PID or its namespace. */
+    rkey.super.pid = 1;
+    rkey.pid_ns    = ucs_sys_get_ns(UCS_SYS_NS_TYPE_PID) ^ 1;
+    CUdevice dev;
+    void *mapped;
+    ASSERT_EQ(CUDA_SUCCESS, cuCtxGetDevice(&dev));
+    ucs_status_t status = uct_cuda_ipc_map_memhandle(&rkey, dev, &mapped,
+                                                    UCS_LOG_LEVEL_ERROR);
+    EXPECT_UCS_OK(status);
+    if (status == UCS_OK) {
+        std::vector<uint8_t> data(buf.size());
+        EXPECT_EQ(CUDA_SUCCESS, cuMemcpyDtoH(data.data(), (CUdeviceptr)mapped,
+                                             data.size()));
+        EXPECT_EQ(std::vector<uint8_t>(buf.size(), 0xAB), data);
+        uct_cuda_ipc_unmap_memhandle(rkey.super.pid, rkey.pid_ns,
+                                     rkey.super.d_bptr, mapped, dev, 0);
+    }
+
+    uct_md_mem_dereg_params_t params = {};
+    params.field_mask = UCT_MD_MEM_DEREG_FIELD_MEMH;
+    params.memh       = memh;
+    EXPECT_UCS_OK(uct_md_mem_dereg_v2(md(), &params));
+    EXPECT_EQ(-1, access(rkey.super.ph.handle.posix_fd_socket.path, F_OK));
+#else
+    UCS_TEST_SKIP_R("built without POSIX FD support");
 #endif
 }
 

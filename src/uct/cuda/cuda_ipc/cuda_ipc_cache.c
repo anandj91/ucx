@@ -177,7 +177,9 @@ static ucs_status_t uct_cuda_ipc_close_memhandle(uct_cuda_ipc_cache_region_t *re
     ucs_status_t status;
 
     if ((region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_VMM) ||
-        (region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD)) {
+        (region->key.ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD) ||
+        (region->key.ph.handle_type ==
+         UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET)) {
         status = UCT_CUDADRV_FUNC_LOG_WARN(cuMemUnmap(
                     (CUdeviceptr)region->mapped_addr, region->key.b_len));
         if (status != UCS_OK) {
@@ -462,6 +464,31 @@ err:
 
 #if HAVE_DECL_SYS_PIDFD_GETFD
 static ucs_status_t
+uct_cuda_ipc_open_memhandle_posix_fd_socket(uct_cuda_ipc_rkey_t *key,
+                                           CUdevice cu_dev,
+                                           CUdeviceptr *mapped_addr,
+                                           ucs_log_level_t log_level)
+{
+    ucs_status_t status;
+    int fd;
+
+    if (key->ph.handle.posix_fd_socket.system_id != ucs_get_system_id()) {
+        return UCS_ERR_UNREACHABLE;
+    }
+
+    status = ucs_fd_import(key->ph.handle.posix_fd_socket.path, &fd);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    status = uct_cuda_ipc_open_memhandle_vmm(
+            key, cu_dev, mapped_addr, (void*)(uintptr_t)fd,
+            CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, log_level);
+    close(fd);
+    return status;
+}
+
+static ucs_status_t
 uct_cuda_ipc_open_memhandle_posix_fd(uct_cuda_ipc_extended_rkey_t *ext_key,
                                      CUdevice cu_dev, CUdeviceptr *mapped_addr,
                                      ucs_log_level_t log_level)
@@ -536,6 +563,9 @@ uct_cuda_ipc_open_memhandle(uct_cuda_ipc_extended_rkey_t *ext_key,
                                                    log_level);
 #endif
 #if HAVE_DECL_SYS_PIDFD_GETFD
+    case UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET:
+        return uct_cuda_ipc_open_memhandle_posix_fd_socket(
+                key, cu_dev, mapped_addr, log_level);
     case UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD:
         return uct_cuda_ipc_open_memhandle_posix_fd(ext_key, cu_dev, mapped_addr,
                                                     log_level);

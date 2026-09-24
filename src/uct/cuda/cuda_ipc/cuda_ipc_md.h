@@ -12,6 +12,7 @@
 #include <ucs/datastruct/khash.h>
 #include <ucs/type/spinlock.h>
 #include <ucs/config/types.h>
+#include <ucs/sys/fd_export.h>
 
 
 typedef enum {
@@ -20,6 +21,7 @@ typedef enum {
     UCT_CUDA_IPC_KEY_HANDLE_TYPE_VMM, /* cuMemCreate memory */
     UCT_CUDA_IPC_KEY_HANDLE_TYPE_MEMPOOL, /* cudaMallocAsync memory */
     UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD, /* POSIX file descriptor */
+    UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET, /* Cooperative FD exchange */
 } uct_cuda_ipc_key_handle_t;
 
 
@@ -35,6 +37,10 @@ typedef struct uct_cuda_ipc_md_handle {
             uint64_t          system_id;     /* Machine identifier for
                                                 same-machine verification */
         } posix_fd;
+        struct {
+            uint64_t          system_id;
+            char              path[UCS_FD_EXPORT_PATH_MAX];
+        } posix_fd_socket;
     } handle;
 #if HAVE_CUDA_FABRIC
     CUmemPoolPtrExportData    ptr;
@@ -50,6 +56,7 @@ typedef struct uct_cuda_ipc_md {
     uct_md_t                 super;             /**< Domain info */
     int                      enable_mnnvl;      /**< Multi-node NVLINK support status */
     int                      fabric_supported;  /**< CUDA fabric support status */
+    char                     *fd_path;          /**< Shared socket directory */
 } uct_cuda_ipc_md_t;
 
 
@@ -116,6 +123,7 @@ typedef struct uct_cuda_ipc_md_config {
     size_t                   cache_max_size;    /**< Max total cached IPC mapping size */
     /** Enable remote IPC memory handle mapping cache */
     int                      enable_remote_cache;
+    char                     *fd_path;
 } uct_cuda_ipc_md_config_t;
 
 
@@ -138,6 +146,7 @@ typedef struct {
     CUdeviceptr               d_bptr; /* Allocation base address */
     size_t                    b_len;  /* Allocation size */
     ucs_list_link_t           link;
+    ucs_fd_export_t           fd_export;
 } uct_cuda_ipc_lkey_t;
 
 

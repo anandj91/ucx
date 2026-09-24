@@ -75,6 +75,13 @@ static ucs_config_field_t uct_cuda_ipc_md_config_table[] = {
      ucs_offsetof(uct_cuda_ipc_md_config_t, enable_remote_cache),
      UCS_CONFIG_TYPE_BOOL},
 
+    {"FD_PATH", "",
+     "Shared directory for cooperative POSIX FD exchange. Empty uses pidfd.\n"
+     "Set an absolute path (at most 42 characters) mounted at the same location\n"
+     "in both peers to support separate PID and network namespaces. Peers must\n"
+     "run as the same UID. Requires socket FD exchange support in both peers.",
+     ucs_offsetof(uct_cuda_ipc_md_config_t, fd_path), UCS_CONFIG_TYPE_STRING},
+
     {NULL}
 };
 
@@ -221,10 +228,12 @@ uct_cuda_ipc_md_query(uct_md_h md, uct_md_attr_v2_t *md_attr)
 
 #if HAVE_DECL_SYS_PIDFD_GETFD
 static ucs_status_t
-uct_cuda_ipc_mem_export_posix_fd(void *addr, uct_cuda_ipc_lkey_t *key)
+uct_cuda_ipc_mem_export_posix_fd(uct_cuda_ipc_md_t *md, void *addr,
+                                 uct_cuda_ipc_lkey_t *key)
 {
     CUmemGenericAllocationHandle alloc_handle;
     ucs_status_t status;
+    int fd;
 
     status = UCT_CUDADRV_FUNC(cuMemRetainAllocationHandle(&alloc_handle, addr),
                               UCS_LOG_LEVEL_DIAG);
@@ -234,7 +243,7 @@ uct_cuda_ipc_mem_export_posix_fd(void *addr, uct_cuda_ipc_lkey_t *key)
     }
 
     status = UCT_CUDADRV_FUNC_LOG_ERR(cuMemExportToShareableHandle(
-            &key->ph.handle.posix_fd.fd, alloc_handle,
+            &fd, alloc_handle,
             CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0));
     UCT_CUDADRV_FUNC_LOG_WARN(cuMemRelease(alloc_handle));
     if (status != UCS_OK) {
@@ -242,7 +251,26 @@ uct_cuda_ipc_mem_export_posix_fd(void *addr, uct_cuda_ipc_lkey_t *key)
         return status;
     }
 
+    if (md->fd_path[0] != '\0') {
+        status = ucs_fd_export_init(&key->fd_export, fd, md->fd_path);
+        if (status != UCS_OK) {
+            close(fd);
+            return status;
+        }
+
+        /* Keep the packed union the same size as the legacy CUDA handle. */
+        UCS_STATIC_ASSERT(sizeof(key->ph.handle.posix_fd_socket) <=
+                          sizeof(key->ph.handle.legacy));
+        key->ph.handle_type = UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET;
+        key->ph.handle.posix_fd_socket.system_id = ucs_get_system_id();
+        ucs_strncpy_safe(key->ph.handle.posix_fd_socket.path,
+                         key->fd_export.path,
+                         sizeof(key->ph.handle.posix_fd_socket.path));
+        return UCS_OK;
+    }
+
     key->ph.handle_type               = UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD;
+    key->ph.handle.posix_fd.fd         = fd;
     key->ph.handle.posix_fd.system_id = ucs_get_system_id();
     ucs_trace("posix_fd export: addr=%p fd=%d pid=%d system_id=0x%" PRIx64,
               addr, key->ph.handle.posix_fd.fd, getpid(),
@@ -312,7 +340,8 @@ static ucs_status_t uct_cuda_ipc_mem_export_fabric(void *addr,
 #endif /* HAVE_CUDA_FABRIC */
 
 static ucs_status_t
-uct_cuda_ipc_mem_add_reg(void *addr, uct_cuda_ipc_memh_t *memh,
+uct_cuda_ipc_mem_add_reg(uct_cuda_ipc_md_t *md, void *addr,
+                         uct_cuda_ipc_memh_t *memh,
                          uct_cuda_ipc_lkey_t **key_p)
 {
     uct_cuda_ipc_lkey_t *key;
@@ -388,7 +417,7 @@ uct_cuda_ipc_mem_add_reg(void *addr, uct_cuda_ipc_memh_t *memh,
 
 #if HAVE_DECL_SYS_PIDFD_GETFD
     if (allowed_handle_types & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-        status = uct_cuda_ipc_mem_export_posix_fd(addr, key);
+        status = uct_cuda_ipc_mem_export_posix_fd(md, addr, key);
         if (status == UCS_OK) {
             goto common_path;
         }
@@ -445,7 +474,8 @@ uct_cuda_ipc_mkey_pack(uct_md_h md, uct_mem_h tl_memh, void *address,
         }
     }
 
-    status = uct_cuda_ipc_mem_add_reg(address, memh, &key);
+    status = uct_cuda_ipc_mem_add_reg(ucs_derived_of(md, uct_cuda_ipc_md_t),
+                                      address, memh, &key);
     if (status != UCS_OK) {
         return status;
     }
@@ -689,6 +719,10 @@ uct_cuda_ipc_mem_dereg(uct_md_h md, const uct_md_mem_dereg_params_t *params)
     ucs_list_for_each_safe(key, tmp, &memh->list, link) {
         if (key->ph.handle_type == UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD) {
             close(key->ph.handle.posix_fd.fd);
+        } else if (key->ph.handle_type ==
+                   UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET) {
+            ucs_fd_export_cleanup(&key->fd_export);
+            close(key->fd_export.fd);
         }
         ucs_free(key);
     }
@@ -762,6 +796,7 @@ out:
 
 static void uct_cuda_ipc_md_close(uct_md_h md)
 {
+    ucs_free(ucs_derived_of(md, uct_cuda_ipc_md_t)->fd_path);
     ucs_free(md);
 }
 
@@ -842,6 +877,13 @@ uct_cuda_ipc_md_open(uct_component_t *component, const char *md_name,
     static ucs_init_once_t init_enable_remote_cache = UCS_INIT_ONCE_INITIALIZER;
     uct_cuda_ipc_md_t* md;
 
+#if !HAVE_DECL_SYS_PIDFD_GETFD
+    if (ipc_config->fd_path[0] != '\0') {
+        ucs_error("socket fd exchange requires a build with POSIX fd support");
+        return UCS_ERR_UNSUPPORTED;
+    }
+#endif
+
     UCS_INIT_ONCE(&init_enable_remote_cache) {
         uct_cuda_ipc_component.enable_remote_cache =
                 ipc_config->enable_remote_cache;
@@ -856,6 +898,12 @@ uct_cuda_ipc_md_open(uct_component_t *component, const char *md_name,
 
     md = ucs_calloc(1, sizeof(*md), "uct_cuda_ipc_md");
     if (md == NULL) {
+        return UCS_ERR_NO_MEMORY;
+    }
+
+    md->fd_path = ucs_strdup(ipc_config->fd_path, "cuda_ipc_fd_path");
+    if (md->fd_path == NULL) {
+        ucs_free(md);
         return UCS_ERR_NO_MEMORY;
     }
 
