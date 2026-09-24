@@ -175,7 +175,7 @@ protected:
        EXPECT_UCS_OK(uct_md_mem_dereg_v2(md(), &dereg_params));
     }
 
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD
     ucs_status_t pack_posix_fd_key(cuda_posix_fd_mem_buffer &buf, size_t size,
                                    uct_mem_h *memh, void *rkey)
     {
@@ -265,7 +265,7 @@ UCS_TEST_P(test_cuda_ipc_md, mkey_pack_mempool)
 
 UCS_TEST_P(test_cuda_ipc_md, mkey_pack_posix_fd)
 {
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD && HAVE_DECL_SYS_PIDFD_GETFD
     cuda_posix_fd_mem_buffer buf(4096, UCS_MEMORY_TYPE_CUDA);
     uct_mem_h memh;
     uct_cuda_ipc_rkey_t rkey = {};
@@ -285,7 +285,7 @@ UCS_TEST_P(test_cuda_ipc_md, mkey_pack_posix_fd)
 
 UCS_TEST_P(test_cuda_ipc_md, posix_fd_system_id_mismatch)
 {
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD && HAVE_DECL_SYS_PIDFD_GETFD
     cuda_posix_fd_mem_buffer buf(4096, UCS_MEMORY_TYPE_CUDA);
     uct_mem_h memh;
     uct_cuda_ipc_rkey_t rkey = {};
@@ -322,7 +322,7 @@ UCS_TEST_P(test_cuda_ipc_md, mnnvl_disabled)
 
 UCS_TEST_P(test_cuda_ipc_md, posix_fd_same_node_ipc)
 {
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD && HAVE_DECL_SYS_PIDFD_GETFD
     cuda_posix_fd_mem_buffer buf(4096, UCS_MEMORY_TYPE_CUDA);
     size_t size = buf.size();
     uct_mem_h memh;
@@ -393,9 +393,9 @@ UCS_TEST_P(test_cuda_ipc_md, posix_fd_same_node_ipc)
 #endif
 }
 
-UCS_TEST_P(test_cuda_ipc_md, posix_fd_socket, "FD_PATH=/tmp")
+UCS_TEST_P(test_cuda_ipc_md, posix_fd_socket, "CUDA_IPC_FD_PATH=/tmp")
 {
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD
     cuda_posix_fd_mem_buffer buf(4096, UCS_MEMORY_TYPE_CUDA);
     uct_cuda_ipc_extended_rkey_t rkey = {};
     uct_mem_h memh;

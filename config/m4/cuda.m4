@@ -209,6 +209,14 @@ AS_IF([test "x$cuda_checked" != "xyes"],
                [AC_CHECK_LIB([cuda], [cuMemRetainAllocationHandle],
                              [AC_DEFINE([HAVE_CUMEMRETAINALLOCATIONHANDLE], [1],
                                         [Enable cuMemRetainAllocationHandle() usage])])
+                AC_CHECK_DECLS([CU_POINTER_ATTRIBUTE_ALLOWED_HANDLE_TYPES,
+                               CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE],
+                               [], [], [[#include <cuda.h>]])
+                AS_IF([test "x$ac_cv_lib_cuda_cuMemRetainAllocationHandle" = "xyes" &&
+                       test "x$ac_cv_have_decl_CU_POINTER_ATTRIBUTE_ALLOWED_HANDLE_TYPES" = "xyes" &&
+                       test "x$ac_cv_have_decl_CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE" = "xyes"],
+                      [AC_DEFINE([HAVE_CUDA_POSIX_FD], [1],
+                                 [Enable CUDA VMM POSIX file descriptor support])])
                 AC_CHECK_DECLS([CU_MEM_LOCATION_TYPE_HOST],
                                [], [], [[#include <cuda.h>]])])
 

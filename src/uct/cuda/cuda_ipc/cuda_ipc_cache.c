@@ -301,7 +301,7 @@ uct_cuda_ipc_open_memhandle_legacy(CUipcMemHandle memh, CUdevice cu_dev,
     return status;
 }
 
-#if HAVE_CUDA_FABRIC || HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_FABRIC || HAVE_CUDA_POSIX_FD
 static void
 uct_cuda_ipc_init_access_desc(CUmemAccessDesc *access_desc, CUdevice cu_dev)
 {
@@ -363,7 +363,7 @@ out:
     return status;
 }
 
-#endif /* HAVE_CUDA_FABRIC || HAVE_DECL_SYS_PIDFD_GETFD */
+#endif /* HAVE_CUDA_FABRIC || HAVE_CUDA_POSIX_FD */
 #if HAVE_CUDA_FABRIC
 static ucs_status_t cuda_ipc_rem_mpool_cache_create(uct_cuda_ipc_rkey_t *key,
                                                     CUdevice cu_dev,
@@ -462,7 +462,7 @@ err:
 }
 #endif /* HAVE_CUDA_FABRIC */
 
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD
 static ucs_status_t
 uct_cuda_ipc_open_memhandle_posix_fd_socket(uct_cuda_ipc_rkey_t *key,
                                            CUdevice cu_dev,
@@ -488,6 +488,7 @@ uct_cuda_ipc_open_memhandle_posix_fd_socket(uct_cuda_ipc_rkey_t *key,
     return status;
 }
 
+#if HAVE_DECL_SYS_PIDFD_GETFD
 static ucs_status_t
 uct_cuda_ipc_open_memhandle_posix_fd(uct_cuda_ipc_extended_rkey_t *ext_key,
                                      CUdevice cu_dev, CUdeviceptr *mapped_addr,
@@ -538,6 +539,7 @@ close_pidfd:
     return status;
 }
 #endif /* HAVE_DECL_SYS_PIDFD_GETFD */
+#endif /* HAVE_CUDA_POSIX_FD */
 
 static ucs_status_t
 uct_cuda_ipc_open_memhandle(uct_cuda_ipc_extended_rkey_t *ext_key,
@@ -562,13 +564,15 @@ uct_cuda_ipc_open_memhandle(uct_cuda_ipc_extended_rkey_t *ext_key,
         return uct_cuda_ipc_open_memhandle_mempool(key, cu_dev, mapped_addr,
                                                    log_level);
 #endif
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD
     case UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD_SOCKET:
         return uct_cuda_ipc_open_memhandle_posix_fd_socket(
                 key, cu_dev, mapped_addr, log_level);
+#if HAVE_DECL_SYS_PIDFD_GETFD
     case UCT_CUDA_IPC_KEY_HANDLE_TYPE_POSIX_FD:
         return uct_cuda_ipc_open_memhandle_posix_fd(ext_key, cu_dev, mapped_addr,
                                                     log_level);
+#endif
 #endif
     case UCT_CUDA_IPC_KEY_HANDLE_TYPE_NO_IPC:
         level = UCS_LOG_LEVEL_DEBUG;

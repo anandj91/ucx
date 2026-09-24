@@ -226,7 +226,7 @@ uct_cuda_ipc_md_query(uct_md_h md, uct_md_attr_v2_t *md_attr)
     return UCS_OK;
 }
 
-#if HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_POSIX_FD
 static ucs_status_t
 uct_cuda_ipc_mem_export_posix_fd(uct_cuda_ipc_md_t *md, void *addr,
                                  uct_cuda_ipc_lkey_t *key)
@@ -348,7 +348,7 @@ uct_cuda_ipc_mem_add_reg(uct_cuda_ipc_md_t *md, void *addr,
     ucs_status_t status;
     int is_ctx_pushed;
     CUdevice cuda_device;
-#if HAVE_CUDA_FABRIC || HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_FABRIC || HAVE_CUDA_POSIX_FD
 #define UCT_CUDA_IPC_QUERY_NUM_ATTRS 3
     CUmemoryPool mempool;
     CUpointer_attribute attr_type[UCT_CUDA_IPC_QUERY_NUM_ATTRS];
@@ -381,7 +381,7 @@ uct_cuda_ipc_mem_add_reg(uct_cuda_ipc_md_t *md, void *addr,
         goto out_pop_ctx;
     }
 
-#if HAVE_CUDA_FABRIC || HAVE_DECL_SYS_PIDFD_GETFD
+#if HAVE_CUDA_FABRIC || HAVE_CUDA_POSIX_FD
     /* cuda_ipc can handle VMM, mallocasync, and legacy pinned device so need to
      * pack appropriate handle */
 
@@ -415,18 +415,19 @@ uct_cuda_ipc_mem_add_reg(uct_cuda_ipc_md_t *md, void *addr,
     }
 #endif /* HAVE_CUDA_FABRIC */
 
-#if HAVE_DECL_SYS_PIDFD_GETFD
-    if (allowed_handle_types & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+#if HAVE_CUDA_POSIX_FD
+    if ((allowed_handle_types & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) &&
+        ((md->fd_path[0] != '\0') || HAVE_DECL_SYS_PIDFD_GETFD)) {
         status = uct_cuda_ipc_mem_export_posix_fd(md, addr, key);
         if (status == UCS_OK) {
             goto common_path;
         }
     }
-#endif /* HAVE_DECL_SYS_PIDFD_GETFD */
+#endif /* HAVE_CUDA_POSIX_FD */
 
     key->ph.handle_type = UCT_CUDA_IPC_KEY_HANDLE_TYPE_NO_IPC;
     goto common_path;
-#endif /* HAVE_CUDA_FABRIC || HAVE_DECL_SYS_PIDFD_GETFD */
+#endif /* HAVE_CUDA_FABRIC || HAVE_CUDA_POSIX_FD */
 legacy_path:
     key->ph.handle_type = UCT_CUDA_IPC_KEY_HANDLE_TYPE_LEGACY;
     status              = UCT_CUDADRV_FUNC_LOG_ERR(
@@ -877,9 +878,9 @@ uct_cuda_ipc_md_open(uct_component_t *component, const char *md_name,
     static ucs_init_once_t init_enable_remote_cache = UCS_INIT_ONCE_INITIALIZER;
     uct_cuda_ipc_md_t* md;
 
-#if !HAVE_DECL_SYS_PIDFD_GETFD
+#if !HAVE_CUDA_POSIX_FD
     if (ipc_config->fd_path[0] != '\0') {
-        ucs_error("socket fd exchange requires a build with POSIX fd support");
+        ucs_error("socket fd exchange requires CUDA VMM POSIX fd support");
         return UCS_ERR_UNSUPPORTED;
     }
 #endif

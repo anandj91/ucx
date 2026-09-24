@@ -12,6 +12,7 @@
 #include <ucs/async/async_fwd.h>
 #include <ucs/debug/log.h>
 #include <ucs/sys/string.h>
+#include <ucs/time/time.h>
 #include <errno.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -149,11 +150,13 @@ ucs_status_t ucs_fd_import(const char *path, int *fd_p)
     struct sockaddr_un addr = {0};
     struct msghdr msg = {0};
     int received_fd = -1;
+    int timeout_ms = 1000;
     ucs_status_t status = UCS_ERR_IO_ERROR;
     char byte;
     struct iovec iov = {&byte, sizeof(byte)};
     struct cmsghdr *cmsg;
     struct pollfd pfd;
+    ucs_time_t deadline, now;
     ssize_t ret;
     size_t offset;
     int fd, count = 0;
@@ -178,7 +181,21 @@ ucs_status_t ucs_fd_import(const char *path, int *fd_p)
 
     /* A stalled exporter must not block rkey unpack indefinitely. */
     pfd.events = POLLIN;
-    ret        = poll(&pfd, 1, 1000);
+    deadline   = ucs_get_time() + ucs_time_from_msec(timeout_ms);
+    for (;;) {
+        ret = poll(&pfd, 1, timeout_ms);
+        if ((ret >= 0) || (errno != EINTR)) {
+            break;
+        }
+
+        now = ucs_get_time();
+        if (now >= deadline) {
+            ret = 0;
+            break;
+        }
+
+        timeout_ms = (int)ceil(ucs_time_to_msec(deadline - now));
+    }
     if (ret <= 0) {
         ucs_debug("fd import poll returned %zd: %m", ret);
         status = (ret == 0) ? UCS_ERR_TIMED_OUT : UCS_ERR_IO_ERROR;
@@ -189,7 +206,9 @@ ucs_status_t ucs_fd_import(const char *path, int *fd_p)
     msg.msg_iovlen     = 1;
     msg.msg_control    = control;
     msg.msg_controllen = sizeof(control);
-    ret = recvmsg(pfd.fd, &msg, MSG_CMSG_CLOEXEC);
+    do {
+        ret = recvmsg(pfd.fd, &msg, MSG_CMSG_CLOEXEC);
+    } while ((ret < 0) && (errno == EINTR));
     if (ret < 0) {
         ucs_debug("recvmsg(%s) failed: %m", path);
         goto out;

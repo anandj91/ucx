@@ -5,14 +5,21 @@
 
 #include <common/test.h>
 extern "C" {
+#include <ucs/async/async_fwd.h>
 #include <ucs/sys/fd_export.h>
 }
 #include <fcntl.h>
 #include <sched.h>
+#include <signal.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 class test_fd_export : public ucs::test {
 protected:
+    static void count_signal(int signo) {
+        ++m_signals;
+    }
+
     void init() override {
         ucs::test::init();
         m_active = false;
@@ -74,7 +81,10 @@ protected:
     ucs_fd_export_t m_exporter;
     int m_pipe[2] = {-1, -1};
     bool m_active;
+    static volatile sig_atomic_t m_signals;
 };
+
+volatile sig_atomic_t test_fd_export::m_signals = 0;
 
 UCS_TEST_F(test_fd_export, process)
 {
@@ -96,4 +106,35 @@ UCS_TEST_F(test_fd_export, cleanup)
     int fd = -1;
     EXPECT_NE(UCS_OK, ucs_fd_import(path.c_str(), &fd));
     EXPECT_EQ(-1, fd);
+}
+
+UCS_TEST_F(test_fd_export, interrupted_import_timeout)
+{
+    /* Keep the connection pending so signals interrupt the import wait. */
+    ASSERT_UCS_OK(ucs_async_modify_handler(m_exporter.listen_fd, 0));
+    pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        struct sigaction action = {};
+        struct itimerval timer  = {};
+        action.sa_handler       = count_signal;
+        action.sa_flags         = SA_RESTART;
+        timer.it_value.tv_usec  = 1000;
+        timer.it_interval       = timer.it_value;
+        sigemptyset(&action.sa_mask);
+        if ((sigaction(SIGALRM, &action, NULL) < 0) ||
+            (setitimer(ITIMER_REAL, &timer, NULL) < 0)) {
+            _exit(1);
+        }
+
+        int fd = -1;
+        ucs_status_t status = ucs_fd_import(m_exporter.path, &fd);
+        _exit((status == UCS_ERR_TIMED_OUT) && (fd == -1) &&
+              (m_signals > 0) ? 0 : 1);
+    }
+
+    int status;
+    ASSERT_EQ(child, waitpid(child, &status, 0));
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(0, WEXITSTATUS(status));
 }
